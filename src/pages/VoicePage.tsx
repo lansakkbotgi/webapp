@@ -67,6 +67,19 @@ export default function VoicePage() {
   const startListening = () => {
     stopSpeaking();
     setErrorMsg('');
+
+    // ─── iOS Safari Speech Synthesis Unlock Hack ───
+    // Safari บังคับว่าต้องมี User Interaction ในการเรียกใช้ครั้งแรก ไม่งั้นเสียงจะไม่ดังหลัง network call
+    if (synthRef.current) {
+      try {
+        const silentUtterance = new SpeechSynthesisUtterance('');
+        silentUtterance.volume = 0;
+        synthRef.current.speak(silentUtterance);
+      } catch (e) {
+        console.error('Silent speech activation failed', e);
+      }
+    }
+
     if (recognitionRef.current) {
       try {
         recognitionRef.current.start();
