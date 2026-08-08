@@ -39,9 +39,9 @@ export default function VoicePage() {
         console.error('STT error', e);
         setStatus('idle');
         if (e.error === 'not-allowed') {
-          setErrorMsg('กรุณาอนุญาตสิทธิ์เข้าถึงไมโครโฟน');
+          setErrorMsg('กรุณาอนุญาตสิทธิ์เข้าถึงไมโครโฟน (กรุณาเช็คการตั้งค่า Safari)');
         } else {
-          setErrorMsg('เกิดข้อผิดพลาดในการฟังเสียง');
+          setErrorMsg(`เกิดข้อผิดพลาดในการฟังเสียง: (Error: ${e.error})`);
         }
       };
 
