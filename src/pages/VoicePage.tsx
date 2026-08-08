@@ -1,6 +1,34 @@
 import { useEffect, useState, useRef } from 'react';
 import { sendMessage } from '../api/chat';
 
+const MALE_VOICE_NAMES = /\b(male|man|niwat|nattapong|krit|somchai|pattara|manop)\b|ชาย|นิวัฒน์|ณัฐพงศ์|กฤษณ์|สมชาย|ภัทร|มานพ/i;
+const NATURAL_VOICE_NAMES = /natural|neural|enhanced|premium|google|microsoft|siri/i;
+
+function selectThaiMaleVoice(voices: SpeechSynthesisVoice[]) {
+  return voices
+    .filter((voice) => voice.lang.toLowerCase().startsWith('th'))
+    .sort((a, b) => {
+      const score = (voice: SpeechSynthesisVoice) =>
+        (MALE_VOICE_NAMES.test(voice.name) ? 100 : 0) +
+        (NATURAL_VOICE_NAMES.test(voice.name) ? 20 : 0) +
+        (voice.default ? 1 : 0);
+
+      return score(b) - score(a);
+    })[0];
+}
+
+function prepareSpeechText(text: string) {
+  return text
+    .replace(/https?:\/\/\S+/g, '')
+    .replace(/[*#_`~]/g, '')
+    .replace(/^\s*[-•▪◦]\s*/gm, '')
+    .replace(/\n+/g, '. ')
+    .replace(/\s+([,;:])/g, '$1')
+    .replace(/([.!?])(?=\S)/g, '$1 ')
+    .replace(/\s+/g, ' ')
+    .trim();
+}
+
 export default function VoicePage() {
   const [status, setStatus] = useState<'idle' | 'listening' | 'thinking' | 'speaking'>('idle');
   const [transcript, setTranscript] = useState('');
@@ -10,6 +38,7 @@ export default function VoicePage() {
   const recognitionRef = useRef<any>(null);
   const synthRef = useRef<SpeechSynthesis | null>(null);
   const utteranceRef = useRef<SpeechSynthesisUtterance | null>(null);
+  const voicesRef = useRef<SpeechSynthesisVoice[]>([]);
 
   // Initialize Speech Services on mount
   useEffect(() => {
@@ -58,6 +87,11 @@ export default function VoicePage() {
 
     // 2. TTS Init
     synthRef.current = window.speechSynthesis;
+    const refreshVoices = () => {
+      voicesRef.current = synthRef.current?.getVoices() ?? [];
+    };
+    refreshVoices();
+    synthRef.current.onvoiceschanged = refreshVoices;
 
     // ─── iOS Safari Speech Synthesis Global Unlock Hack ───
     // ปลดล็อกเสียงเมื่อผู้ใช้แตะสัมผัสหน้าจอส่วนใดก็ตามในครั้งแรก
@@ -81,6 +115,9 @@ export default function VoicePage() {
 
     return () => {
       stopSpeaking();
+      if (synthRef.current) {
+        synthRef.current.onvoiceschanged = null;
+      }
       document.removeEventListener('click', unlock);
       document.removeEventListener('touchstart', unlock);
     };
@@ -141,22 +178,26 @@ export default function VoicePage() {
     synthRef.current.cancel(); // Cancel any current speech
 
     // standard clean up of markdown symbols for speech synthesis
-    const speechCleaned = text
+    const normalizedSpeech = prepareSpeechText(text);
+    const speechCleaned = normalizedSpeech
       .replace(/[*#_`~]/g, '')
       .replace(/https?:\/\/\S+/g, 'ลิงก์ภายนอก')
       .slice(0, 800); // Limit long speech response to save performance on phone
+
+    if (!speechCleaned) return;
 
     const utterance = new SpeechSynthesisUtterance(speechCleaned);
     utterance.lang = 'th-TH';
     
     // Attempt to locate a Thai voice on iOS Safari
-    const voices = synthRef.current.getVoices();
-    const thaiVoice = voices.find(v => v.lang.includes('th') || v.lang.includes('TH'));
+    const thaiVoice = selectThaiMaleVoice(voicesRef.current);
     if (thaiVoice) {
       utterance.voice = thaiVoice;
     }
     
-    utterance.rate = 1.0;
+    utterance.rate = 1.15;
+    utterance.pitch = 0.88;
+    utterance.volume = 1;
 
     utterance.onstart = () => {
       setStatus('speaking');
