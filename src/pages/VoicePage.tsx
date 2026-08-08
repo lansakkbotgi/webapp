@@ -59,26 +59,36 @@ export default function VoicePage() {
     // 2. TTS Init
     synthRef.current = window.speechSynthesis;
 
+    // ─── iOS Safari Speech Synthesis Global Unlock Hack ───
+    // ปลดล็อกเสียงเมื่อผู้ใช้แตะสัมผัสหน้าจอส่วนใดก็ตามในครั้งแรก
+    // ป้องกันการเรียกใช้ speak() พร้อมกันกับ mic start ซึ่งทำให้ iOS ตัดสาย (aborted)
+    const unlock = () => {
+      if (synthRef.current) {
+        try {
+          const silentUtterance = new SpeechSynthesisUtterance('');
+          silentUtterance.volume = 0;
+          synthRef.current.speak(silentUtterance);
+          console.log('[auth] iOS TTS engine unlocked via interaction');
+          document.removeEventListener('click', unlock);
+          document.removeEventListener('touchstart', unlock);
+        } catch (err) {
+          console.error('[auth] Global unlock failed', err);
+        }
+      }
+    };
+    document.addEventListener('click', unlock);
+    document.addEventListener('touchstart', unlock);
+
     return () => {
       stopSpeaking();
+      document.removeEventListener('click', unlock);
+      document.removeEventListener('touchstart', unlock);
     };
   }, []);
 
   const startListening = () => {
     stopSpeaking();
     setErrorMsg('');
-
-    // ─── iOS Safari Speech Synthesis Unlock Hack ───
-    // Safari บังคับว่าต้องมี User Interaction ในการเรียกใช้ครั้งแรก ไม่งั้นเสียงจะไม่ดังหลัง network call
-    if (synthRef.current) {
-      try {
-        const silentUtterance = new SpeechSynthesisUtterance('');
-        silentUtterance.volume = 0;
-        synthRef.current.speak(silentUtterance);
-      } catch (e) {
-        console.error('Silent speech activation failed', e);
-      }
-    }
 
     if (recognitionRef.current) {
       try {
