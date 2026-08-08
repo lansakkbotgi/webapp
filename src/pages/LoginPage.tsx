@@ -82,6 +82,32 @@ export default function LoginPage() {
           >
             {loading ? 'กำลังเข้าสู่ระบบ...' : 'เข้าสู่ระบบ'}
           </button>
+
+          {/* ปุ่ม Bypass สำหรับงานทดสอบ */}
+          <button
+            type="button"
+            className="btn btn-secondary w-full"
+            style={{ marginTop: '12px', background: '#374151', color: '#f3f4f6', borderColor: '#4b5563' }}
+            disabled={loading}
+            onClick={async () => {
+              setLoading(true);
+              setError('');
+              try {
+                const { api, saveTokens } = await import('../api/client');
+                const data = await api.get<{ user: any; accessToken: string; refreshToken: string }>('/auth/bypass-token');
+                saveTokens(data.accessToken, data.refreshToken);
+                setUser(data.user);
+                navigate('/');
+              } catch (err: any) {
+                console.error(err);
+                setError('การล็อกอินทดสอบล้มเหลว (ตรวจสอบสถานะเซิร์ฟเวอร์)');
+              } finally {
+                setLoading(false);
+              }
+            }}
+          >
+            🔓 เข้าสู่ระบบทดสอบ (Bypass)
+          </button>
         </form>
       </div>
     </div>
