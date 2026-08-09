@@ -36,15 +36,22 @@ export default function VoicePage() {
   const recognitionRef = useRef<any>(null);
   const synthRef = useRef<SpeechSynthesis | null>(null);
   const voicesRef = useRef<SpeechSynthesisVoice[]>([]);
+  const voiceEnabledRef = useRef(voiceEnabled);
   const sessionActiveRef = useRef(false);
   const processingRef = useRef(false);
   const micStreamRef = useRef<MediaStream | null>(null);
+  const speechTimerRef = useRef<number | null>(null);
 
-  const stopSpeaking = () => { synthRef.current?.cancel(); setStatus((current) => current === 'ai-speaking' ? 'user-speaking' : current); };
+  const stopSpeaking = () => {
+    if (speechTimerRef.current !== null) window.clearTimeout(speechTimerRef.current);
+    speechTimerRef.current = null;
+    synthRef.current?.cancel();
+    setStatus((current) => current === 'ai-speaking' ? 'user-speaking' : current);
+  };
 
   const speakText = (text: string) => {
-    if (!synthRef.current || !voiceEnabled || !sessionActiveRef.current) return;
-    synthRef.current.cancel();
+    if (!synthRef.current || !voiceEnabledRef.current || !sessionActiveRef.current) return;
+    stopSpeaking();
     const speech = prepareSpeechText(text).slice(0, 800);
     if (!speech) { if (sessionActiveRef.current) setStatus('listening'); return; }
     const utterance = new SpeechSynthesisUtterance(speech);
@@ -54,7 +61,14 @@ export default function VoicePage() {
     utterance.onstart = () => setStatus('ai-speaking');
     utterance.onend = () => { if (sessionActiveRef.current) { processingRef.current = false; setStatus('listening'); } };
     utterance.onerror = () => { if (sessionActiveRef.current) { processingRef.current = false; setStatus('listening'); } };
-    synthRef.current.speak(utterance);
+    // Chrome can drop an utterance when speak() immediately follows cancel().
+    // A short delay makes TTS reliable without adding a noticeable pause.
+    speechTimerRef.current = window.setTimeout(() => {
+      if (!sessionActiveRef.current || !voiceEnabledRef.current || !synthRef.current) return;
+      synthRef.current.resume();
+      synthRef.current.speak(utterance);
+      speechTimerRef.current = null;
+    }, 80);
   };
 
   const handleSendToAI = async (text: string) => {
@@ -74,6 +88,14 @@ export default function VoicePage() {
   const startSession = async () => {
     if (!recognitionRef.current) { setErrorMsg('เบราว์เซอร์นี้ไม่รองรับการสนทนาด้วยเสียง'); return; }
     sessionActiveRef.current = true; processingRef.current = false; setErrorMsg(''); setReplyText(''); setTranscript('');
+    // Prime speech synthesis during the user's click. This is required by
+    // Safari/iOS and also prevents Chromium from silently blocking later TTS.
+    try {
+      synthRef.current?.resume();
+      const unlock = new SpeechSynthesisUtterance('');
+      unlock.volume = 0;
+      synthRef.current?.speak(unlock);
+    } catch { /* the browser may not require an unlock */ }
     // Ask for an echo-cancelled microphone permission where supported. The
     // browser SpeechRecognition engine applies its own input processing too.
     try { micStreamRef.current = await navigator.mediaDevices?.getUserMedia({ audio: { echoCancellation: true, noiseSuppression: true, autoGainControl: true } }); } catch { /* recognition may still work if permission was already granted */ }
@@ -101,10 +123,11 @@ export default function VoicePage() {
     synthRef.current = window.speechSynthesis;
     const refreshVoices = () => { voicesRef.current = synthRef.current?.getVoices() ?? []; }; refreshVoices();
     synthRef.current.onvoiceschanged = refreshVoices;
-    return () => { sessionActiveRef.current = false; recognitionRef.current?.stop(); synthRef.current?.cancel(); micStreamRef.current?.getTracks().forEach((track) => track.stop()); if (synthRef.current) synthRef.current.onvoiceschanged = null; };
+    return () => { sessionActiveRef.current = false; recognitionRef.current?.stop(); synthRef.current?.cancel(); if (speechTimerRef.current !== null) window.clearTimeout(speechTimerRef.current); micStreamRef.current?.getTracks().forEach((track) => track.stop()); if (synthRef.current) synthRef.current.onvoiceschanged = null; };
   }, []);
 
-  const toggleVoice = () => setVoiceEnabled((enabled) => { const next = !enabled; try { localStorage.setItem('webapp-voice-enabled', String(next)); } catch { /* private mode */ } if (!next) synthRef.current?.cancel(); return next; });
+  useEffect(() => { voiceEnabledRef.current = voiceEnabled; }, [voiceEnabled]);
+  const toggleVoice = () => setVoiceEnabled((enabled) => { const next = !enabled; voiceEnabledRef.current = next; try { localStorage.setItem('webapp-voice-enabled', String(next)); } catch { /* private mode */ } if (!next) stopSpeaking(); return next; });
   const active = status !== 'idle';
 
   return <div className="voice-page">
