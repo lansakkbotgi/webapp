@@ -4,6 +4,8 @@ import { sendMessage } from '../api/chat';
 type VoiceStatus = 'idle' | 'listening' | 'user-speaking' | 'processing' | 'ai-speaking';
 const maleVoiceHints = /\b(male|man|niwat|nattapong|krit|somchai|pattara|manop)\b|ชาย|ผู้ชาย|นิวัฒน์|ณัฐพงศ์|กฤษณ์|สมชาย|ภัทร|มานพ/i;
 const naturalVoiceHints = /natural|neural|enhanced|premium|google|microsoft|siri/i;
+const privilegedCommandPolicy = `คุณคือผู้ช่วยจัดการระบบร้าน ทำงานได้ตามสิทธิ์ของบัญชีที่ล็อกอินอยู่เท่านั้น ห้ามอ้างว่าเป็น master admin หรือข้ามสิทธิ์ ห้ามสร้างผลลัพธ์ปลอมและห้ามบอกว่าสำเร็จถ้า API ยังไม่ยืนยัน หากคำสั่งเกี่ยวกับการเพิ่ม ลบ แก้ไข หรือเปิดเผยข้อมูลผู้ใช้ การส่งแจ้งเตือน การสร้างรายงาน การเปลี่ยนสิทธิ์ หรือการกระทำที่อาจกระทบความปลอดภัย ให้ขอคำยืนยันจากผู้ใช้ก่อนดำเนินการ`;
+const confirmationPatterns = /เพิ่ม(?:บุคคล|ผู้ใช้|สมาชิก|บัญชี)|ลบ(?:บุคคล|ผู้ใช้|สมาชิก|บัญชี|ข้อมูล)|แก้ไข(?:ข้อมูลผู้ใช้|สิทธิ์|บัญชี)|แจ้งเตือน|ส่งข้อความ|สร้างรายงาน|เปลี่ยนสิทธิ์|ระงับ|ปลดล็อก|เปิดเผย|ดาวน์โหลดข้อมูล|ยืนยันการทำรายการ|คำสั่งซื้อ|โอนเงิน|ชำระเงิน/i;
 
 function chooseThaiMaleVoice(voices: SpeechSynthesisVoice[]) {
   return voices.filter((voice) => voice.lang.toLowerCase().startsWith('th')).sort((a, b) => {
@@ -32,6 +34,7 @@ export default function VoicePage() {
   const [transcript, setTranscript] = useState('');
   const [replyText, setReplyText] = useState('');
   const [errorMsg, setErrorMsg] = useState('');
+  const [pendingCommand, setPendingCommand] = useState('');
   const [voiceEnabled, setVoiceEnabled] = useState(() => { try { return localStorage.getItem('webapp-voice-enabled') !== 'false'; } catch { return true; } });
   const recognitionRef = useRef<any>(null);
   const synthRef = useRef<SpeechSynthesis | null>(null);
@@ -71,11 +74,39 @@ export default function VoicePage() {
     }, 80);
   };
 
-  const handleSendToAI = async (text: string) => {
+  const executeCommand = async (text: string) => {
     if (!sessionActiveRef.current || processingRef.current) return;
     processingRef.current = true; setStatus('processing');
-    try { const response = await sendMessage(text); setReplyText(response.content); speakText(response.content); }
+    try {
+      const response = await sendMessage(`${privilegedCommandPolicy}\n\nคำสั่งจากผู้ใช้:\n${text}`);
+      setReplyText(response.content);
+      speakText(response.content);
+    }
     catch (error) { console.error(error); processingRef.current = false; setErrorMsg('เชื่อมต่อผู้ช่วย AI ไม่สำเร็จ ลองพูดอีกครั้งได้เลย'); if (sessionActiveRef.current) setStatus('listening'); }
+  };
+
+  const handleSendToAI = async (text: string) => {
+    if (pendingCommand && /^(ยืนยัน|ตกลง|ดำเนินการ|ใช่|ยืนยันครับ|ยืนยันค่ะ)[.!\s]*$/i.test(text.trim())) {
+      const command = pendingCommand;
+      setPendingCommand('');
+      await executeCommand(`ผู้ใช้ยืนยันแล้ว ให้ดำเนินการคำสั่งนี้: ${command}`);
+      return;
+    }
+    if (pendingCommand && /^(ยกเลิก|ไม่ต้อง|ไม่ใช่|หยุด|ยกเลิกครับ|ยกเลิกค่ะ)[.!\s]*$/i.test(text.trim())) {
+      setPendingCommand('');
+      setReplyText('ยกเลิกคำสั่งแล้ว');
+      setStatus('listening');
+      return;
+    }
+    if (confirmationPatterns.test(text)) {
+      setPendingCommand(text);
+      processingRef.current = false;
+      setStatus('listening');
+      setReplyText('คำสั่งนี้อาจกระทบข้อมูลหรือผู้ใช้งาน จึงต้องยืนยันก่อนดำเนินการ');
+      speakText('คำสั่งนี้อาจกระทบข้อมูลหรือผู้ใช้งาน กรุณากดยืนยันก่อนดำเนินการ');
+      return;
+    }
+    await executeCommand(text);
   };
 
   const endSession = () => {
@@ -128,6 +159,8 @@ export default function VoicePage() {
 
   useEffect(() => { voiceEnabledRef.current = voiceEnabled; }, [voiceEnabled]);
   const toggleVoice = () => setVoiceEnabled((enabled) => { const next = !enabled; voiceEnabledRef.current = next; try { localStorage.setItem('webapp-voice-enabled', String(next)); } catch { /* private mode */ } if (!next) stopSpeaking(); return next; });
+  const confirmPendingCommand = async () => { const command = pendingCommand; setPendingCommand(''); await executeCommand(`ผู้ใช้ยืนยันแล้ว ให้ดำเนินการคำสั่งนี้: ${command}`); };
+  const cancelPendingCommand = () => { setPendingCommand(''); setReplyText('ยกเลิกคำสั่งแล้ว'); setStatus('listening'); };
   const active = status !== 'idle';
 
   return <div className="voice-page">
@@ -139,6 +172,7 @@ export default function VoicePage() {
     </div>
     {errorMsg && <div className="error-msg text-center" style={{ marginTop: '24px', maxWidth: '300px' }}>{errorMsg}</div>}
     {replyText && <div className="glass" style={{ marginTop: '32px', padding: '16px', borderRadius: '16px', maxWidth: '320px', maxHeight: '180px', overflowY: 'auto', fontSize: '14px', lineHeight: 1.5 }}><strong>คำตอบผู้ช่วย AI:</strong><p style={{ marginTop: '4px', whiteSpace: 'pre-wrap' }}>{replyText}</p></div>}
+    {pendingCommand && <div className="glass" role="alertdialog" aria-label="ยืนยันคำสั่ง" style={{ marginTop: '16px', padding: '16px', borderRadius: '16px', maxWidth: '320px' }}><strong>ยืนยันก่อนดำเนินการ</strong><p style={{ margin: '8px 0' }}>{pendingCommand}</p><div style={{ display: 'flex', gap: '8px' }}><button onClick={confirmPendingCommand} className="btn btn-danger">ยืนยันและดำเนินการ</button><button onClick={cancelPendingCommand} className="btn btn-ghost">ยกเลิก</button></div></div>}
     <div className="voice-controls"><button onClick={toggleVoice} className="btn btn-ghost" aria-pressed={voiceEnabled}>{voiceEnabled ? 'เสียงผู้ชาย: เปิด' : 'เสียงผู้ชาย: ปิด'}</button>{active && <button onClick={endSession} className="btn btn-danger">จบการสนทนา</button>}</div>
   </div>;
 }
